@@ -5,7 +5,7 @@ SETTINGS_PATH = Path(__file__).resolve().parents[2] / "config" / "settings.json"
 
 DEFAULTS = {
     "poll_seconds": 2,
-    "warmup_seconds": 60,
+    "warmup_seconds": 60 * 30,
     "chart_hours": 1,
 }
 

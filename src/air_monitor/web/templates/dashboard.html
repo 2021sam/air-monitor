@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Air Monitor</title>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
@@ -12,14 +13,20 @@
       background: #f5f5f5;
     }
 
+    nav {
+      margin-bottom: 20px;
+    }
+
     .cards {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 15px;
-      margin-bottom: 25px;
+      margin-bottom: 20px;
     }
 
-    .card {
+    .card,
+    .controls,
+    .chart-box {
       background: white;
       padding: 18px;
       border-radius: 8px;
@@ -30,14 +37,64 @@
       margin-top: 6px;
     }
 
-    .chart-box {
+    .status-line {
       background: white;
-      padding: 20px;
+      padding: 12px 18px;
       border-radius: 8px;
+      margin-bottom: 20px;
     }
 
-    nav {
+    .controls {
       margin-bottom: 20px;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .control-row:last-child {
+      margin-bottom: 0;
+    }
+
+    button,
+    select,
+    input {
+      font-size: 14px;
+      padding: 7px 10px;
+    }
+
+    button.active {
+      font-weight: bold;
+      outline: 2px solid #555;
+    }
+
+    #customRange {
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .range-title {
+      font-weight: bold;
+      margin-bottom: 15px;
+    }
+
+    .chart-box {
+      min-height: 420px;
+    }
+
+    canvas {
+      max-height: 500px;
+    }
+
+    @media (max-width: 900px) {
+      .cards {
+        grid-template-columns: repeat(2, 1fr);
+      }
     }
   </style>
 </head>
@@ -49,6 +106,10 @@
   &nbsp; | &nbsp;
   <a href="/settings">Settings</a>
 </nav>
+
+<div id="sensorStatus" class="status-line">
+  Connecting...
+</div>
 
 <div class="cards">
   <div class="card">
@@ -72,15 +133,65 @@
   </div>
 </div>
 
+<div class="controls">
+
+  <div class="control-row">
+    <strong>Range:</strong>
+
+    <button data-range="today">Today</button>
+    <button data-range="yesterday">Yesterday</button>
+    <button data-range="24h">24 Hours</button>
+    <button data-range="7d">7 Days</button>
+    <button data-range="30d">30 Days</button>
+    <button data-range="custom">Custom</button>
+  </div>
+
+  <div id="customRange" class="control-row">
+    <label>
+      Start
+      <input id="startDate" type="date">
+    </label>
+
+    <label>
+      End
+      <input id="endDate" type="date">
+    </label>
+
+    <button id="applyCustom">Apply</button>
+  </div>
+
+  <div class="control-row">
+    <strong>Resolution:</strong>
+
+    <select id="resolution">
+      <option value="1s">1 second</option>
+      <option value="10s">10 seconds</option>
+      <option value="1m">1 minute</option>
+      <option value="5m">5 minutes</option>
+      <option value="15m">15 minutes</option>
+      <option value="1h">1 hour</option>
+      <option value="6h">6 hours</option>
+      <option value="1d">1 day</option>
+    </select>
+  </div>
+
+</div>
+
 <div class="chart-box">
+  <div id="rangeTitle" class="range-title"></div>
   <canvas id="gasChart"></canvas>
 </div>
 
 <script>
 const ctx = document.getElementById("gasChart");
 
+let selectedRange = "today";
+let customStart = null;
+let customEnd = null;
+
 const chart = new Chart(ctx, {
   type: "line",
+
   data: {
     labels: [],
     datasets: [{
@@ -90,46 +201,380 @@ const chart = new Chart(ctx, {
       borderWidth: 2
     }]
   },
+
   options: {
     responsive: true,
+    maintainAspectRatio: false,
     animation: false,
+
+    interaction: {
+      intersect: false,
+      mode: "index"
+    },
+
     scales: {
       x: {
         ticks: {
           maxTicksLimit: 12
         }
       }
+    },
+
+    plugins: {
+      tooltip: {
+        callbacks: {
+          afterBody(items) {
+            if (!items.length) {
+              return "";
+            }
+
+            const index = items[0].dataIndex;
+            const row = chart._sourceRows?.[index];
+
+            if (!row) {
+              return "";
+            }
+
+            const lines = [];
+
+            if (row.sample_count) {
+              lines.push(
+                "Samples: " + row.sample_count
+              );
+            }
+
+            if (row.is_warmup) {
+              lines.push("Warm-up data");
+            }
+
+            return lines;
+          }
+        }
+      }
     }
   }
 });
+
+
+function startOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+
+function toLocalDateInput(date) {
+  const year = date.getFullYear();
+
+  const month = String(
+    date.getMonth() + 1
+  ).padStart(2, "0");
+
+  const day = String(
+    date.getDate()
+  ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+
+function dateFromInput(value) {
+  const parts = value.split("-").map(Number);
+
+  return new Date(
+    parts[0],
+    parts[1] - 1,
+    parts[2],
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+
+function getRange() {
+  const now = new Date();
+
+  if (selectedRange === "today") {
+    return {
+      start: startOfToday(),
+      end: now
+    };
+  }
+
+  if (selectedRange === "yesterday") {
+    const today = startOfToday();
+
+    return {
+      start: addDays(today, -1),
+      end: today
+    };
+  }
+
+  if (selectedRange === "24h") {
+    return {
+      start: new Date(
+        now.getTime() - 24 * 60 * 60 * 1000
+      ),
+      end: now
+    };
+  }
+
+  if (selectedRange === "7d") {
+    return {
+      start: new Date(
+        now.getTime() - 7 * 24 * 60 * 60 * 1000
+      ),
+      end: now
+    };
+  }
+
+  if (selectedRange === "30d") {
+    return {
+      start: new Date(
+        now.getTime() - 30 * 24 * 60 * 60 * 1000
+      ),
+      end: now
+    };
+  }
+
+  if (
+    selectedRange === "custom" &&
+    customStart &&
+    customEnd
+  ) {
+    return {
+      start: customStart,
+      end: addDays(customEnd, 1)
+    };
+  }
+
+  return {
+    start: startOfToday(),
+    end: now
+  };
+}
+
+
+function rangeSpansMultipleDays(start, end) {
+  const startDay = new Date(start);
+  startDay.setHours(0, 0, 0, 0);
+
+  const endDay = new Date(end);
+  endDay.setHours(0, 0, 0, 0);
+
+  return startDay.getTime() !== endDay.getTime();
+}
+
+
+function formatRangeTitle(start, end) {
+  const dateOptions = {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  };
+
+  if (!rangeSpansMultipleDays(start, end)) {
+    return start.toLocaleDateString(
+      undefined,
+      dateOptions
+    );
+  }
+
+  return (
+    start.toLocaleDateString(undefined, dateOptions) +
+    " — " +
+    end.toLocaleDateString(undefined, dateOptions)
+  );
+}
+
+
+function formatChartTimestamp(timestamp, multiDay) {
+  const d = new Date(timestamp);
+
+  if (multiDay) {
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
+
+  return d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+
+function suggestedResolution(rangeName) {
+  if (rangeName === "today") {
+    return "1m";
+  }
+
+  if (rangeName === "yesterday") {
+    return "1m";
+  }
+
+  if (rangeName === "24h") {
+    return "1m";
+  }
+
+  if (rangeName === "7d") {
+    return "15m";
+  }
+
+  if (rangeName === "30d") {
+    return "1h";
+  }
+
+  return null;
+}
+
+
+function updateURL() {
+  const params = new URLSearchParams();
+
+  params.set("range", selectedRange);
+  params.set(
+    "resolution",
+    document.getElementById("resolution").value
+  );
+
+  if (
+    selectedRange === "custom" &&
+    customStart &&
+    customEnd
+  ) {
+    params.set(
+      "start",
+      toLocalDateInput(customStart)
+    );
+
+    params.set(
+      "end",
+      toLocalDateInput(customEnd)
+    );
+  }
+
+  history.replaceState(
+    null,
+    "",
+    "/?" + params.toString()
+  );
+}
+
+
+function setActiveRangeButton() {
+  document
+    .querySelectorAll("[data-range]")
+    .forEach(button => {
+      button.classList.toggle(
+        "active",
+        button.dataset.range === selectedRange
+      );
+    });
+
+  document.getElementById(
+    "customRange"
+  ).style.display =
+    selectedRange === "custom"
+      ? "flex"
+      : "none";
+}
+
 
 async function refreshStatus() {
   const response = await fetch("/api/status");
   const data = await response.json();
 
+  const statusElement =
+    document.getElementById("sensorStatus");
+
   if (!data.online) {
+    statusElement.textContent = "Sensor offline";
     return;
   }
 
-  document.getElementById("temperature").textContent =
+  document.getElementById(
+    "temperature"
+  ).textContent =
     data.temperature_c.toFixed(2) + " C";
 
-  document.getElementById("humidity").textContent =
+  document.getElementById(
+    "humidity"
+  ).textContent =
     data.humidity_percent.toFixed(2) + " %";
 
-  document.getElementById("pressure").textContent =
+  document.getElementById(
+    "pressure"
+  ).textContent =
     data.pressure_hpa.toFixed(2) + " hPa";
 
-  document.getElementById("gas").textContent =
-    data.gas_resistance_kohms.toFixed(2) + " kOhm";
+  document.getElementById(
+    "gas"
+  ).textContent =
+    data.gas_resistance_kohms.toFixed(2) +
+    " kOhm";
+
+  const readingTime =
+    new Date(data.timestamp).toLocaleString();
+
+  if (data.warming_up) {
+    const minutes = Math.ceil(
+      data.warmup_remaining_seconds / 60
+    );
+
+    statusElement.textContent =
+      `WARMING UP — about ${minutes} minute(s) remaining — ` +
+      `latest reading ${readingTime}`;
+  } else {
+    statusElement.textContent =
+      `Monitoring — latest reading ${readingTime}`;
+  }
 }
 
+
 async function refreshChart() {
-  const response = await fetch("/api/readings?limit=1000");
+  const range = getRange();
+
+  const resolution =
+    document.getElementById("resolution").value;
+
+  const params = new URLSearchParams({
+    start: range.start.toISOString(),
+    end: range.end.toISOString(),
+    resolution: resolution
+  });
+
+  const response = await fetch(
+    "/api/readings?" + params.toString()
+  );
+
   const rows = await response.json();
 
+  const multiDay = rangeSpansMultipleDays(
+    range.start,
+    range.end
+  );
+
+  chart._sourceRows = rows;
+
   chart.data.labels = rows.map(row =>
-    new Date(row.timestamp).toLocaleTimeString()
+    formatChartTimestamp(
+      row.timestamp,
+      multiDay
+    )
   );
 
   chart.data.datasets[0].data = rows.map(
@@ -137,15 +582,173 @@ async function refreshChart() {
   );
 
   chart.update();
+
+  document.getElementById(
+    "rangeTitle"
+  ).textContent =
+    formatRangeTitle(
+      range.start,
+      range.end
+    ) +
+    "  •  " +
+    resolution +
+    " resolution";
+
+  updateURL();
 }
+
 
 async function refresh() {
   await refreshStatus();
   await refreshChart();
 }
 
+
+document
+  .querySelectorAll("[data-range]")
+  .forEach(button => {
+    button.addEventListener("click", async () => {
+      selectedRange = button.dataset.range;
+
+      if (selectedRange === "custom") {
+        const today = startOfToday();
+
+        document.getElementById(
+          "startDate"
+        ).value =
+          toLocalDateInput(today);
+
+        document.getElementById(
+          "endDate"
+        ).value =
+          toLocalDateInput(today);
+      }
+
+      const suggestion =
+        suggestedResolution(selectedRange);
+
+      if (suggestion) {
+        document.getElementById(
+          "resolution"
+        ).value = suggestion;
+      }
+
+      setActiveRangeButton();
+
+      if (selectedRange !== "custom") {
+        await refreshChart();
+      }
+    });
+  });
+
+
+document
+  .getElementById("applyCustom")
+  .addEventListener("click", async () => {
+    const startValue =
+      document.getElementById("startDate").value;
+
+    const endValue =
+      document.getElementById("endDate").value;
+
+    if (!startValue || !endValue) {
+      alert("Select both a start and end date.");
+      return;
+    }
+
+    customStart = dateFromInput(startValue);
+    customEnd = dateFromInput(endValue);
+
+    if (customEnd < customStart) {
+      alert("End date must be on or after start date.");
+      return;
+    }
+
+    await refreshChart();
+  });
+
+
+document
+  .getElementById("resolution")
+  .addEventListener("change", refreshChart);
+
+
+function loadURLState() {
+  const params = new URLSearchParams(
+    window.location.search
+  );
+
+  const range = params.get("range");
+
+  const validRanges = [
+    "today",
+    "yesterday",
+    "24h",
+    "7d",
+    "30d",
+    "custom"
+  ];
+
+  if (validRanges.includes(range)) {
+    selectedRange = range;
+  }
+
+  const resolution =
+    params.get("resolution");
+
+  const validResolutions = [
+    "1s",
+    "10s",
+    "1m",
+    "5m",
+    "15m",
+    "1h",
+    "6h",
+    "1d"
+  ];
+
+  if (validResolutions.includes(resolution)) {
+    document.getElementById(
+      "resolution"
+    ).value = resolution;
+  } else {
+    const suggestion =
+      suggestedResolution(selectedRange);
+
+    if (suggestion) {
+      document.getElementById(
+        "resolution"
+      ).value = suggestion;
+    }
+  }
+
+  if (selectedRange === "custom") {
+    const start = params.get("start");
+    const end = params.get("end");
+
+    if (start && end) {
+      document.getElementById(
+        "startDate"
+      ).value = start;
+
+      document.getElementById(
+        "endDate"
+      ).value = end;
+
+      customStart = dateFromInput(start);
+      customEnd = dateFromInput(end);
+    }
+  }
+
+  setActiveRangeButton();
+}
+
+
+loadURLState();
 refresh();
-setInterval(refresh, 5000);
+
+setInterval(refreshStatus, 5000);
+setInterval(refreshChart, 15000);
 </script>
 
 </body>
