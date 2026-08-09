@@ -32,6 +32,14 @@ class BME680Sensor:
             address=self.address,
         )
 
+        # The Adafruit BME680 driver returns an anomalously high gas
+        # resistance value on the first measurement after initialization.
+        # Prime the sensor once and discard that startup measurement.
+        self._sensor.temperature
+        self._sensor.relative_humidity
+        self._sensor.pressure
+        self._sensor.gas
+
     def read(self) -> BME680Reading:
         return BME680Reading(
             timestamp=datetime.now(timezone.utc),
