@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Air Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 30px;
+      background: #f5f5f5;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 15px;
+      margin-bottom: 25px;
+    }
+
+    .card {
+      background: white;
+      padding: 18px;
+      border-radius: 8px;
+    }
+
+    .value {
+      font-size: 28px;
+      margin-top: 6px;
+    }
+
+    .chart-box {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+    }
+
+    nav {
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+
+<body>
+
+<nav>
+  <strong>Air Monitor</strong>
+  &nbsp; | &nbsp;
+  <a href="/settings">Settings</a>
+</nav>
+
+<div class="cards">
+  <div class="card">
+    Temperature
+    <div id="temperature" class="value">--</div>
+  </div>
+
+  <div class="card">
+    Humidity
+    <div id="humidity" class="value">--</div>
+  </div>
+
+  <div class="card">
+    Pressure
+    <div id="pressure" class="value">--</div>
+  </div>
+
+  <div class="card">
+    Gas resistance
+    <div id="gas" class="value">--</div>
+  </div>
+</div>
+
+<div class="chart-box">
+  <canvas id="gasChart"></canvas>
+</div>
+
+<script>
+const ctx = document.getElementById("gasChart");
+
+const chart = new Chart(ctx, {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: [{
+      label: "Gas resistance (kOhm)",
+      data: [],
+      pointRadius: 0,
+      borderWidth: 2
+    }]
+  },
+  options: {
+    responsive: true,
+    animation: false,
+    scales: {
+      x: {
+        ticks: {
+          maxTicksLimit: 12
+        }
+      }
+    }
+  }
+});
+
+async function refreshStatus() {
+  const response = await fetch("/api/status");
+  const data = await response.json();
+
+  if (!data.online) {
+    return;
+  }
+
+  document.getElementById("temperature").textContent =
+    data.temperature_c.toFixed(2) + " C";
+
+  document.getElementById("humidity").textContent =
+    data.humidity_percent.toFixed(2) + " %";
+
+  document.getElementById("pressure").textContent =
+    data.pressure_hpa.toFixed(2) + " hPa";
+
+  document.getElementById("gas").textContent =
+    data.gas_resistance_kohms.toFixed(2) + " kOhm";
+}
+
+async function refreshChart() {
+  const response = await fetch("/api/readings?limit=1000");
+  const rows = await response.json();
+
+  chart.data.labels = rows.map(row =>
+    new Date(row.timestamp).toLocaleTimeString()
+  );
+
+  chart.data.datasets[0].data = rows.map(
+    row => row.gas_resistance_kohms
+  );
+
+  chart.update();
+}
+
+async function refresh() {
+  await refreshStatus();
+  await refreshChart();
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "poll_seconds": 2,
+  "warmup_seconds": 60,
+  "chart_hours": 1
+}
